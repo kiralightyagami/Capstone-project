@@ -105,3 +105,66 @@ The proposed platform aims to solve these problems through:
 
 **Key Instruction(s)**: `distribute(escrow_vault, splits[], distribution_seed)`
 
+## 4. USER STORIES
+
+### User 1: Creator
+
+**Who?**
+
+A digital creator who wants to sell premium content (PDFs, videos, templates, tools, courses, code, etc.).
+
+**Where?**
+
+On your decentralized creator marketplace built on Solana.
+
+**How?**
+
+Using a connected Solana wallet through the platform's UI.
+
+**What are they going to do?**
+
+Creators will upload and publish digital content, set a price, and sell access to buyers who pay in crypto. They will also manage listings, track sales, and receive instant payouts.
+
+**How are they going to do it?**
+
+1. Connect their wallet.
+2. Create a new listing (title, description, content upload, metadata).
+3. Set price + revenue splits (optional).
+4. Confirm a transaction to register the content on-chain.
+5. Publish the listing.
+6. Receive instant payouts every time a buyer purchases.
+7. View analytics and manage content from a dashboard.
+
+### User 2: Buyer
+
+**Who?**
+
+A user who wants to purchase digital content using a Solana wallet.
+
+**Where?**
+
+On the same decentralized creator marketplace interface.
+
+**How?**
+
+Using their Solana wallet to authenticate and sign purchase transactions.
+
+**What are they going to do?**
+
+Buyers will browse listings, purchase digital content, receive an on-chain access token, and unlock the gated content instantly.
+
+**How are they going to do it?**
+
+1. Connect wallet to the platform.
+2. Browse creator listings or search for content.
+3. Select an item and click Buy.
+4. Sign a single transaction that:
+   - Sends payment
+   - Mints access token
+   - Grants access
+5. Receive instant confirmation.
+6. Unlock and view the content using wallet-based validation.
+7. Access purchase history from the dashboard anytime.
+
+---
+---
