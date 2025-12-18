@@ -40,7 +40,7 @@ The proposed platform aims to solve these problems through:
 ```mermaid
 ---
 config:
-  theme: mc
+  theme: base
   look: classic
 ---
 graph TB
