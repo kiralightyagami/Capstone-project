@@ -1,12 +1,12 @@
 [package]
-name = "payment-escrow"
+name = "access-mint"
 version = "0.1.0"
 description = "Created with Anchor"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "payment_escrow"
+name = "access_mint"
 
 [features]
 default = []
@@ -20,5 +20,4 @@ idl-build = ["anchor-lang/idl-build"]
 [dependencies]
 anchor-lang = "0.31.1"
 anchor-spl = "0.31.1"
-access-mint = { path = "../../../access-mint/programs/access-mint", features = ["cpi"] }
 
