@@ -19,13 +19,30 @@ pub fn mint_access(ctx: Context<MintAccess>) -> Result<()> {
     let creator = access_mint_state.creator;
     let content_id = access_mint_state.content_id;
     let seed = access_mint_state.seed;
-    let authority_bump = ctx.bumps.mint_authority;
+    let seed_bytes = seed.to_le_bytes();
+    
+    // Derive the bump manually since we're using UncheckedAccount
+    let (expected_authority, authority_bump) = Pubkey::find_program_address(
+        &[
+            AccessMintState::AUTHORITY_SEED_PREFIX,
+            creator.as_ref(),
+            content_id.as_ref(),
+            seed_bytes.as_ref(),
+        ],
+        ctx.program_id,
+    );
+    
+    // Verify the mint authority matches
+    require!(
+        ctx.accounts.mint_authority.key() == expected_authority,
+        AccessMintError::InvalidMintAuthority
+    );
     
     let authority_seeds = &[
         AccessMintState::AUTHORITY_SEED_PREFIX,
         creator.as_ref(),
         content_id.as_ref(),
-        seed.to_le_bytes().as_ref(),
+        seed_bytes.as_ref(),
         &[authority_bump],
     ];
     let signer_seeds = &[&authority_seeds[..]];
@@ -84,19 +101,11 @@ pub struct MintAccess<'info> {
     pub mint: Account<'info, Mint>,
     
     /// Mint authority PDA
-    /// CHECK: PDA validated by seeds
-    #[account(
-        seeds = [
-            AccessMintState::AUTHORITY_SEED_PREFIX,
-            access_mint_state.creator.as_ref(),
-            access_mint_state.content_id.as_ref(),
-            access_mint_state.seed.to_le_bytes().as_ref(),
-        ],
-        bump
-    )]
+    /// CHECK: PDA validated manually in instruction
     pub mint_authority: UncheckedAccount<'info>,
     
     /// Buyer's token account (ATA)
+    /// Will be created if it doesn't exist
     #[account(
         init_if_needed,
         payer = payer,

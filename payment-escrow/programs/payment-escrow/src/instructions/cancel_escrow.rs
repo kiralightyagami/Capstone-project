@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program::System;
-use anchor_spl::token::{self, Transfer as SplTransfer};
+use anchor_spl::token::{self, Token, Transfer as SplTransfer};
 use crate::state::*;
 use crate::errors::*;
 

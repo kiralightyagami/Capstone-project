@@ -1,7 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token};
 use crate::state::*;
-use crate::errors::*;
 
 /// Initialize a new access token mint for a specific content
 pub fn initialize_mint(
