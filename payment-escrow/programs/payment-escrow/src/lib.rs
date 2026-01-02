@@ -40,8 +40,8 @@ pub mod payment_escrow {
     /// 
     /// # Arguments
     /// * `payment_amount` - Amount to pay (must match escrow price)
-    pub fn buy_and_mint(
-        ctx: Context<BuyAndMint>,
+    pub fn buy_and_mint<'info>(
+        ctx: Context<'_, '_, '_, 'info, BuyAndMint<'info>>,
         payment_amount: u64,
     ) -> Result<()> {
         instructions::buy_and_mint::buy_and_mint(ctx, payment_amount)

@@ -7,13 +7,18 @@ use access_mint::{
     cpi::accounts::MintAccess as AccessMintAccounts,
     cpi::mint_access,
 };
+use distribution::{
+    program::Distribution,
+    cpi::accounts::Distribute as DistributeAccounts,
+    cpi::distribute,
+};
 use crate::state::*;
 use crate::errors::*;
 
 /// Main atomic instruction - handles payment to escrow vault
 /// In a complete implementation, this would also CPI to Access Mint and Revenue Split programs
-pub fn buy_and_mint(
-    ctx: Context<BuyAndMint>,
+pub fn buy_and_mint<'info>(
+    ctx: Context<'_, '_, '_, 'info, BuyAndMint<'info>>,
     payment_amount: u64,
 ) -> Result<()> {
     let escrow = &mut ctx.accounts.escrow_state;
@@ -107,7 +112,30 @@ pub fn buy_and_mint(
     
     msg!("Access token minted to buyer: {}", ctx.accounts.buyer.key());
     
-    // TODO: Add CPI to Revenue Split program to distribute funds from vault
+    // CPI to Distribution program to distribute funds from vault
+    let remaining_accounts = ctx.remaining_accounts.to_vec();
+    
+    distribute(
+        CpiContext::new(
+            ctx.accounts.distribution_program.to_account_info(),
+            DistributeAccounts {
+                split_state: ctx.accounts.split_state.to_account_info(),
+                vault: ctx.accounts.vault.to_account_info(),
+                creator: ctx.accounts.creator.to_account_info(),
+                platform_treasury: ctx.accounts.platform_treasury.to_account_info(),
+                payment_token_mint: ctx.accounts.payment_token_mint.to_account_info(),
+                vault_token_account: ctx.accounts.vault_token_account.to_account_info(),
+                creator_token_account: ctx.accounts.creator_token_account.to_account_info(),
+                platform_treasury_token_account: ctx.accounts.platform_treasury_token_account.to_account_info(),
+                token_program: ctx.accounts.token_program.to_account_info(),
+                system_program: ctx.accounts.system_program.to_account_info(),
+            },
+        )
+        .with_remaining_accounts(remaining_accounts),
+        payment_amount,
+    )?;
+    
+    msg!("Funds distributed to creator, platform, and collaborators");
     
     msg!("Buy and mint completed successfully");
     
@@ -185,6 +213,42 @@ pub struct BuyAndMint<'info> {
     /// Associated token program
     pub associated_token_program: Program<'info, AssociatedToken>,
     
+    // ============ Distribution Program Accounts ============
+    
+    /// Distribution program
+    pub distribution_program: Program<'info, Distribution>,
+    
+    /// Split state PDA (revenue split configuration)
+    /// CHECK: Validated by distribution program via CPI
+    #[account(mut)]
+    pub split_state: UncheckedAccount<'info>,
+    
+    /// Creator account (receives their share)
+    /// CHECK: Validated by distribution program via CPI
+    #[account(mut)]
+    pub creator: UncheckedAccount<'info>,
+    
+    /// Platform treasury (receives platform fees)
+    /// CHECK: Validated by distribution program via CPI
+    #[account(mut)]
+    pub platform_treasury: UncheckedAccount<'info>,
+    
+    /// Payment token mint (System::id() for SOL, token mint for SPL)
+    /// CHECK: Used to determine payment type in distribution
+    pub payment_token_mint: UncheckedAccount<'info>,
+    
+    /// Creator's token account (for SPL payments)
+    /// CHECK: Optional, validated by distribution program when SPL payment is used
+    #[account(mut)]
+    pub creator_token_account: UncheckedAccount<'info>,
+    
+    /// Platform treasury token account (for SPL payments)
+    /// CHECK: Optional, validated by distribution program when SPL payment is used
+    #[account(mut)]
+    pub platform_treasury_token_account: UncheckedAccount<'info>,
+    
     /// System program
     pub system_program: Program<'info, System>,
+    
+    // Remaining accounts: Collaborator accounts (SOL) or token accounts (SPL)
 }

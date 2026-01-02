@@ -653,6 +653,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "distribution"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anchor-spl",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1052,6 +1060,7 @@ dependencies = [
  "access-mint",
  "anchor-lang",
  "anchor-spl",
+ "distribution",
 ]
 
 [[package]]
