@@ -1,4 +1,10 @@
-# Decentralized Creator Commerce Platform on Solana
+<div align="center">
+  <img src="frontend/public/icons/Ownmark.svg" alt="Ownmark Logo" width="200"/>
+</div>
+
+<h1 align="center">Ownmark - Create it.Own it.Ship it.</h1>
+
+## Decentralized Creator Commerce Platform on Solana
 
 ## 1. WHAT
 

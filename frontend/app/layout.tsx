@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Ownmark",
-  description: "Create it.Own it.Share it.",
+  description: "Create it.Own it.Ship it.",
   icons: {
     icon: "/icons/Ownmark.svg",
   },
