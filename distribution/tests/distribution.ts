@@ -1,140 +1,207 @@
-import { LiteSVM } from "litesvm";
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { Distribution } from "../target/types/distribution";
 import {
   PublicKey,
-  Transaction,
-  TransactionInstruction,
   SystemProgram,
   Keypair,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import { expect } from "chai";
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
-import BN from "bn.js";
 
+describe("Distribution Program", () => {
+  
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+  const program = anchor.workspace.Distribution as Program<Distribution>;
 
-describe("Distribution Program (LiteSVM)", () => {
-  let svm: LiteSVM;
-  let programId: PublicKey;
+ 
   let creator: Keypair;
   let platformTreasury: Keypair;
   let collaborator1: Keypair;
   let collaborator2: Keypair;
 
-  before(() => {
-    // Load the compiled program
-    const programPath = path.join(__dirname, "../target/deploy/distribution.so");
-    const programBuffer = fs.readFileSync(programPath);
+  
+  const contentId = Array.from({ length: 32 }, (_, i) => i + 1);
+  const seed = new anchor.BN(1);
+  const platformFeeBps = 250; // 2.5%
 
-    // Get program ID from keypair
-    const programKeypairPath = path.join(__dirname, "../target/deploy/distribution-keypair.json");
-    const programKeypairData = JSON.parse(fs.readFileSync(programKeypairPath, "utf-8"));
-    const programKeypair = Keypair.fromSecretKey(new Uint8Array(programKeypairData));
-    programId = programKeypair.publicKey;
-
-    // Initialize LiteSVM
-    svm = new LiteSVM();
-    svm.addProgram(programId, programBuffer);
-
-    // Create test accounts
-    creator = Keypair.generate();
+  before(async () => {
+    creator = (provider.wallet as anchor.Wallet).payer;
     platformTreasury = Keypair.generate();
     collaborator1 = Keypair.generate();
     collaborator2 = Keypair.generate();
 
-    // Airdrop SOL
-    svm.airdrop(creator.publicKey, BigInt(10 * LAMPORTS_PER_SOL));
-    svm.airdrop(platformTreasury.publicKey, BigInt(1 * LAMPORTS_PER_SOL));
-    svm.airdrop(collaborator1.publicKey, BigInt(1 * LAMPORTS_PER_SOL));
-    svm.airdrop(collaborator2.publicKey, BigInt(1 * LAMPORTS_PER_SOL));
+    
+    const airdropSigs = await Promise.all([
+      provider.connection.requestAirdrop(platformTreasury.publicKey, 2 * LAMPORTS_PER_SOL),
+      provider.connection.requestAirdrop(collaborator1.publicKey, 2 * LAMPORTS_PER_SOL),
+      provider.connection.requestAirdrop(collaborator2.publicKey, 2 * LAMPORTS_PER_SOL),
+    ]);
 
-    console.log("LiteSVM initialized");
-    console.log("Program ID:", programId.toString());
+    
+    await Promise.all(
+      airdropSigs.map(sig => provider.connection.confirmTransaction(sig))
+    );
+
+    console.log("Test accounts initialized");
+    console.log("Program ID:", program.programId.toString());
   });
 
-  describe("Basic SOL Distribution", () => {
-    it("Should distribute SOL correctly", () => {
-      const sender = Keypair.generate();
-      const receiver = PublicKey.unique();
-      
-      // Airdrop to sender
-      svm.airdrop(sender.publicKey, BigInt(10 * LAMPORTS_PER_SOL));
-      
-      // Create transfer instruction
-      const transferAmount = 1_000_000n;
-      const ix = SystemProgram.transfer({
-        fromPubkey: sender.publicKey,
-        toPubkey: receiver,
-        lamports: transferAmount,
-      });
-      
-      // Build and send transaction
-      const tx = new Transaction();
-      tx.recentBlockhash = svm.latestBlockhash();
-      tx.add(ix);
-      tx.sign(sender);
-      
-      svm.sendTransaction(tx);
-      
-      // Verify balances
-      const balanceAfter = svm.getBalance(receiver);
-      expect(balanceAfter).to.equal(transferAmount);
-      
-      console.log("SOL transfer successful");
-    });
-  });
+  describe("Initialize Split Configuration", () => {
+    let splitPda: PublicKey;
 
-  describe("Program Verification", () => {
-    it("Should have program loaded in LiteSVM", () => {
-      // Verify program exists in SVM
-      const programAccount = svm.getAccount(programId);
-      expect(programAccount).to.not.be.null;
-      expect(programAccount?.executable).to.be.true;
-      
-      console.log("Program loaded successfully");
-      console.log("Program ID:", programId.toString());
-    });
-
-    it("Should derive PDAs correctly", () => {
-      const contentId = Buffer.alloc(32, 1);
-      const seed = new BN(1);
-      
+    it("Should initialize split without collaborators", async () => {
       // Derive split PDA
-      const [splitPda, bump] = PublicKey.findProgramAddressSync(
+      [splitPda] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("split"),
           creator.publicKey.toBuffer(),
-          contentId,
+          Buffer.from(contentId),
           seed.toArrayLike(Buffer, "le", 8),
         ],
-        programId
+        program.programId
       );
 
-      console.log("PDA derivation successful");
-      console.log("Split PDA:", splitPda.toString());
-      console.log("Bump:", bump);
-      
-      expect(bump).to.be.greaterThan(0);
-      expect(bump).to.be.lessThan(256);
+      const tx = await program.methods
+        .initializeSplit(
+          contentId,
+          platformFeeBps,
+          [],
+          seed
+        )
+        .accountsPartial({
+          creator: creator.publicKey,
+          platformTreasury: platformTreasury.publicKey,
+          splitState: splitPda,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      console.log("Split initialized (no collaborators)");
+      console.log("Transaction:", tx);
+
+      // Fetch and verify split state
+      const splitState = await program.account.splitState.fetch(splitPda);
+
+      expect(splitState.creator.toString()).to.equal(creator.publicKey.toString());
+      expect(splitState.platformFeeBps).to.equal(platformFeeBps);
+      expect(splitState.platformTreasury.toString()).to.equal(platformTreasury.publicKey.toString());
+      expect(splitState.collaborators.length).to.equal(0);
+
+      console.log("Platform fee:", splitState.platformFeeBps, "bps (2.5%)");
+      console.log("Collaborators:", splitState.collaborators.length);
     });
 
-    it("Should derive vault PDA correctly", () => {
-      const fakeSplitPda = PublicKey.unique();
-      
-      const [vaultPda, bump] = PublicKey.findProgramAddressSync(
-        [Buffer.from("vault"), fakeSplitPda.toBuffer()],
-        programId
+    it("Should initialize split with collaborators", async () => {
+      const seed2 = new anchor.BN(2);
+
+      const [splitPda2] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("split"),
+          creator.publicKey.toBuffer(),
+          Buffer.from(contentId),
+          seed2.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
       );
 
-      console.log("Vault PDA derivation successful");
-      console.log("Vault PDA:", vaultPda.toString());
-      console.log("Bump:", bump);
-      
-      expect(vaultPda).to.not.be.undefined;
+      const collaborators = [
+        { pubkey: collaborator1.publicKey, shareBps: 500 },  // 5%
+        { pubkey: collaborator2.publicKey, shareBps: 300 },  // 3%
+      ];
+
+      const tx = await program.methods
+        .initializeSplit(contentId, platformFeeBps, collaborators, seed2)
+        .accountsPartial({
+          creator: creator.publicKey,
+          platformTreasury: platformTreasury.publicKey,
+          splitState: splitPda2,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      console.log("Split initialized (with collaborators)");
+      console.log("Transaction:", tx);
+
+      // Fetch and verify
+      const splitState = await program.account.splitState.fetch(splitPda2);
+
+      expect(splitState.collaborators.length).to.equal(2);
+      expect(splitState.collaborators[0].shareBps).to.equal(500);
+      expect(splitState.collaborators[1].shareBps).to.equal(300);
+
+      console.log("Collaborator 1:", collaborator1.publicKey.toString(), "- 5%");
+      console.log("Collaborator 2:", collaborator2.publicKey.toString(), "- 3%");
+    });
+
+    it("Should fail if platform fee exceeds 10%", async () => {
+      const seed3 = new anchor.BN(3);
+
+      const [invalidSplitPda] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("split"),
+          creator.publicKey.toBuffer(),
+          Buffer.from(contentId),
+          seed3.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+
+      try {
+        await program.methods
+          .initializeSplit(contentId, 1500, [], seed3) // 15% - exceeds max
+          .accountsPartial({
+            creator: creator.publicKey,
+            platformTreasury: platformTreasury.publicKey,
+            splitState: invalidSplitPda,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+
+        expect.fail("Should have thrown InvalidPlatformFee error");
+      } catch (error: any) {
+        expect(error.toString()).to.include("InvalidPlatformFee");
+        console.log("Correctly rejected platform fee > 10%");
+      }
+    });
+
+    it("Should fail if total shares exceed 100%", async () => {
+      const seed4 = new anchor.BN(4);
+
+      const [invalidSplitPda] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("split"),
+          creator.publicKey.toBuffer(),
+          Buffer.from(contentId),
+          seed4.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+
+      const invalidCollaborators = [
+        { pubkey: collaborator1.publicKey, shareBps: 9000 },  // 90%
+        { pubkey: collaborator2.publicKey, shareBps: 1500 },  // 15%
+      ];
+      // Total: 250 + 9000 + 1500 = 10750 > 10000
+
+      try {
+        await program.methods
+          .initializeSplit(contentId, platformFeeBps, invalidCollaborators, seed4)
+          .accountsPartial({
+            creator: creator.publicKey,
+            platformTreasury: platformTreasury.publicKey,
+            splitState: invalidSplitPda,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+
+        expect.fail("Should have thrown InvalidShareDistribution error");
+      } catch (error: any) {
+        expect(error.toString()).to.include("InvalidShareDistribution");
+        console.log("Correctly rejected total shares > 100%");
+      }
     });
   });
 

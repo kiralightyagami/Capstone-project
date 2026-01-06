@@ -1,291 +1,261 @@
-import { LiteSVM } from "litesvm";
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { AccessMint } from "../target/types/access_mint";
 import {
   PublicKey,
-  Transaction,
   SystemProgram,
   Keypair,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
+import {
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddress,
+  getAccount,
+} from "@solana/spl-token";
 import { expect } from "chai";
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
-import BN from "bn.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+describe("Access Mint Program", () => {
+  const provider = anchor.AnchorProvider.env();
+  anchor.setProvider(provider);
 
-describe("Access Mint Program (LiteSVM)", () => {
-  let svm: LiteSVM;
-  let programId: PublicKey;
+  const program = anchor.workspace.AccessMint as Program<AccessMint>;
+
   let creator: Keypair;
   let buyer: Keypair;
+  let mint: Keypair;
 
-  before(() => {
-   
-    const programPath = path.join(__dirname, "../target/deploy/access_mint.so");
-    const programBuffer = fs.readFileSync(programPath);
+  const contentId = Array.from({ length: 32 }, (_, i) => i + 1);
+  const seed = new anchor.BN(1);
 
-    
-    const programKeypairPath = path.join(__dirname, "../target/deploy/access_mint-keypair.json");
-    const programKeypairData = JSON.parse(fs.readFileSync(programKeypairPath, "utf-8"));
-    const programKeypair = Keypair.fromSecretKey(new Uint8Array(programKeypairData));
-    programId = programKeypair.publicKey;
-
-    
-    svm = new LiteSVM();
-    svm.addProgram(programId, programBuffer);
-
-    // Create test accounts
-    creator = Keypair.generate();
+  before(async () => {
+    creator = (provider.wallet as anchor.Wallet).payer;
     buyer = Keypair.generate();
+    mint = Keypair.generate();
 
-    
-    svm.airdrop(creator.publicKey, BigInt(10 * LAMPORTS_PER_SOL));
-    svm.airdrop(buyer.publicKey, BigInt(10 * LAMPORTS_PER_SOL));
+    // Airdrop SOL to buyer
+    const airdropSig = await provider.connection.requestAirdrop(
+      buyer.publicKey,
+      2 * LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(airdropSig);
 
-    console.log("LiteSVM initialized");
-    console.log("Program ID:", programId.toString());
+    console.log("Test accounts initialized");
+    console.log("Program ID:", program.programId.toString());
   });
 
-  describe("Basic Functionality", () => {
-    it("Should transfer SOL correctly", () => {
-      const sender = Keypair.generate();
-      const receiver = PublicKey.unique();
-      
-      svm.airdrop(sender.publicKey, BigInt(LAMPORTS_PER_SOL));
-      
-      const transferAmount = 1_000_000n;
-      const ix = SystemProgram.transfer({
-        fromPubkey: sender.publicKey,
-        toPubkey: receiver,
-        lamports: transferAmount,
-      });
-      
-      const tx = new Transaction();
-      tx.recentBlockhash = svm.latestBlockhash();
-      tx.add(ix);
-      tx.sign(sender);
-      
-      svm.sendTransaction(tx);
-      
-      const balanceAfter = svm.getBalance(receiver);
-      expect(balanceAfter).to.equal(transferAmount);
-      
-      console.log("SOL transfer successful");
-    });
-  });
+  describe("Initialize Access Mint", () => {
+    let accessMintStatePda: PublicKey;
+    let mintAuthorityPda: PublicKey;
 
-  describe("Program Verification", () => {
-    it("Should have program loaded in LiteSVM", () => {
-      const programAccount = svm.getAccount(programId);
-      expect(programAccount).to.not.be.null;
-      expect(programAccount?.executable).to.be.true;
-      
-      console.log("Program loaded successfully");
-      console.log("Program ID:", programId.toString());
-    });
-
-    it("Should derive access mint state PDA correctly", () => {
-      const contentId = Buffer.alloc(32, 1);
-      const seed = new BN(1);
-      
-      // Derive access mint state PDA
-      const [accessMintStatePda, bump] = PublicKey.findProgramAddressSync(
+    it("Should initialize access mint for content", async () => {
+      // Derive PDAs
+      [accessMintStatePda] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("access_mint_state"),
           creator.publicKey.toBuffer(),
-          contentId,
+          Buffer.from(contentId),
           seed.toArrayLike(Buffer, "le", 8),
         ],
-        programId
+        program.programId
       );
 
-      console.log("Access mint state PDA derivation successful");
-      console.log("Access Mint State PDA:", accessMintStatePda.toString());
-      console.log("Bump:", bump);
-      
-      expect(bump).to.be.greaterThan(0);
-      expect(bump).to.be.lessThan(256);
-    });
-
-    it("Should derive mint authority PDA correctly", () => {
-      const contentId = Buffer.alloc(32, 1);
-      const seed = new BN(1);
-      
-      // Derive mint authority PDA
-      const [mintAuthorityPda, bump] = PublicKey.findProgramAddressSync(
+      [mintAuthorityPda] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("access_mint_authority"),
           creator.publicKey.toBuffer(),
-          contentId,
+          Buffer.from(contentId),
           seed.toArrayLike(Buffer, "le", 8),
         ],
-        programId
+        program.programId
       );
 
-      console.log("Mint authority PDA derivation successful");
-      console.log("Mint Authority PDA:", mintAuthorityPda.toString());
-      console.log("Bump:", bump);
-      
-      expect(mintAuthorityPda).to.not.be.undefined;
+      const tx = await program.methods
+        .initializeMint(contentId, seed)
+        .accountsPartial({
+          creator: creator.publicKey,
+          accessMintState: accessMintStatePda,
+          mint: mint.publicKey,
+          mintAuthority: mintAuthorityPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([mint])
+        .rpc();
+
+      console.log("Access mint initialized");
+      console.log("Transaction:", tx);
+
+      // Fetch and verify access mint state
+      const accessMintState = await program.account.accessMintState.fetch(accessMintStatePda);
+
+      expect(accessMintState.creator.toString()).to.equal(creator.publicKey.toString());
+      expect(accessMintState.mint.toString()).to.equal(mint.publicKey.toString());
+      expect(accessMintState.mintAuthority.toString()).to.equal(mintAuthorityPda.toString());
+      expect(accessMintState.totalMinted.toNumber()).to.equal(0);
+
+      console.log("Mint:", mint.publicKey.toString());
+      console.log("Mint Authority:", mintAuthorityPda.toString());
+      console.log("Total Minted:", accessMintState.totalMinted.toNumber());
+
+      // Verify mint account
+      const mintInfo = await provider.connection.getAccountInfo(mint.publicKey);
+      expect(mintInfo).to.not.be.null;
+      console.log("SPL Mint account created");
     });
   });
 
-  describe("Access Token Validation", () => {
-    it("Should calculate correct PDA relationships", () => {
-      const contentId = Buffer.alloc(32, 2);
-      const seed = new BN(100);
-      
-      // Derive both PDAs for the same content
-      const [statePda] = PublicKey.findProgramAddressSync(
+  describe("Mint Access Token", () => {
+    let accessMintStatePda: PublicKey;
+    let mintAuthorityPda: PublicKey;
+    let buyerTokenAccount: PublicKey;
+
+    before(async () => {
+      // Use seed 2 for this test suite
+      const seed2 = new anchor.BN(2);
+      const mint2 = Keypair.generate();
+
+      [accessMintStatePda] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("access_mint_state"),
           creator.publicKey.toBuffer(),
-          contentId,
-          seed.toArrayLike(Buffer, "le", 8),
-        ],
-        programId
-      );
-
-      const [authorityPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("access_mint_authority"),
-          creator.publicKey.toBuffer(),
-          contentId,
-          seed.toArrayLike(Buffer, "le", 8),
-        ],
-        programId
-      );
-
-      // They should be different
-      expect(statePda.toString()).to.not.equal(authorityPda.toString());
-      
-      console.log("PDA relationships validated");
-      console.log("State PDA:", statePda.toString());
-      console.log("Authority PDA:", authorityPda.toString());
-    });
-
-    it("Should derive unique PDAs for different content", () => {
-      const contentId1 = Buffer.alloc(32, 1);
-      const contentId2 = Buffer.alloc(32, 2);
-      const seed = new BN(1);
-      
-      const [pda1] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("access_mint_state"),
-          creator.publicKey.toBuffer(),
-          contentId1,
-          seed.toArrayLike(Buffer, "le", 8),
-        ],
-        programId
-      );
-
-      const [pda2] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("access_mint_state"),
-          creator.publicKey.toBuffer(),
-          contentId2,
-          seed.toArrayLike(Buffer, "le", 8),
-        ],
-        programId
-      );
-
-      // Different content should have different PDAs
-      expect(pda1.toString()).to.not.equal(pda2.toString());
-      
-      console.log("Unique PDA generation verified");
-      console.log("Content 1 PDA:", pda1.toString());
-      console.log("Content 2 PDA:", pda2.toString());
-    });
-
-    it("Should derive unique PDAs for different seeds", () => {
-      const contentId = Buffer.alloc(32, 1);
-      const seed1 = new BN(1);
-      const seed2 = new BN(2);
-      
-      const [pda1] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("access_mint_state"),
-          creator.publicKey.toBuffer(),
-          contentId,
-          seed1.toArrayLike(Buffer, "le", 8),
-        ],
-        programId
-      );
-
-      const [pda2] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("access_mint_state"),
-          creator.publicKey.toBuffer(),
-          contentId,
+          Buffer.from(contentId),
           seed2.toArrayLike(Buffer, "le", 8),
         ],
-        programId
+        program.programId
       );
 
-      // Different seeds should have different PDAs
-      expect(pda1.toString()).to.not.equal(pda2.toString());
-      
-      console.log("Seed-based PDA uniqueness verified");
-      console.log("Seed 1 PDA:", pda1.toString());
-      console.log("Seed 2 PDA:", pda2.toString());
-    });
-  });
+      [mintAuthorityPda] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("access_mint_authority"),
+          creator.publicKey.toBuffer(),
+          Buffer.from(contentId),
+          seed2.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
 
-  describe("Token Program Integration", () => {
-    it("Should validate Token Program ID", () => {
-      expect(TOKEN_PROGRAM_ID.toString()).to.equal("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
-      console.log("Token Program ID validated:", TOKEN_PROGRAM_ID.toString());
-    });
+      // Initialize the mint first
+      await program.methods
+        .initializeMint(contentId, seed2)
+        .accountsPartial({
+          creator: creator.publicKey,
+          accessMintState: accessMintStatePda,
+          mint: mint2.publicKey,
+          mintAuthority: mintAuthorityPda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .signers([mint2])
+        .rpc();
 
-    it("Should have SPL Token program available", () => {
-      // Verify we can work with token program ID
-      const tokenProgramAccount = svm.getAccount(TOKEN_PROGRAM_ID);
-      
-      // Token program might not be loaded in LiteSVM by default
-      // This test verifies we can reference it
-      console.log("Token Program reference available");
-      console.log("Token Program ID:", TOKEN_PROGRAM_ID.toString());
-    });
-  });
+      // Get buyer's token account address
+      buyerTokenAccount = await getAssociatedTokenAddress(
+        mint2.publicKey,
+        buyer.publicKey
+      );
 
-  describe("Access Control Logic", () => {
-    it("Should validate non-transferable token concept", () => {
-      // Test the concept: buyer should have exactly 1 token (0 decimals)
-      const expectedTokenAmount = 1;
-      const decimals = 0;
-      
-      // With 0 decimals, smallest unit = 1 token
-      const smallestUnit = Math.pow(10, decimals);
-      expect(smallestUnit).to.equal(1);
-      
-      // Verify token amount calculation
-      const tokenAmount = expectedTokenAmount * smallestUnit;
-      expect(tokenAmount).to.equal(1);
-      
-      console.log("Non-transferable token logic validated");
-      console.log("Decimals:", decimals);
-      console.log("Token amount:", tokenAmount);
+      mint = mint2; // Store for use in tests
     });
 
-    it("Should validate access verification logic", () => {
-      // Simulate access check: buyer must have >= 1 token
-      const buyerTokenBalance = 1;
-      const requiredBalance = 1;
-      
-      const hasAccess = buyerTokenBalance >= requiredBalance;
+    it("Should mint access token to buyer", async () => {
+      const tx = await program.methods
+        .mintAccess()
+        .accountsPartial({
+          buyer: buyer.publicKey,
+          payer: buyer.publicKey,
+          accessMintState: accessMintStatePda,
+          mint: mint.publicKey,
+          mintAuthority: mintAuthorityPda,
+          buyerTokenAccount: buyerTokenAccount,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([buyer])
+        .rpc();
+
+      console.log("Access token minted");
+      console.log("Transaction:", tx);
+
+      // Verify token account was created and has 1 token
+      const tokenAccountInfo = await getAccount(
+        provider.connection,
+        buyerTokenAccount
+      );
+
+      expect(tokenAccountInfo.amount).to.equal(BigInt(1));
+      expect(tokenAccountInfo.mint.toString()).to.equal(mint.publicKey.toString());
+      expect(tokenAccountInfo.owner.toString()).to.equal(buyer.publicKey.toString());
+
+      console.log("Buyer received 1 access token");
+      console.log("Token amount:", tokenAccountInfo.amount.toString());
+
+      // Verify total minted counter increased
+      const accessMintState = await program.account.accessMintState.fetch(accessMintStatePda);
+      expect(accessMintState.totalMinted.toNumber()).to.equal(1);
+
+      console.log("Total minted:", accessMintState.totalMinted.toNumber());
+    });
+
+    it("Should verify buyer has access", async () => {
+      // Check token balance
+      const tokenAccountInfo = await getAccount(
+        provider.connection,
+        buyerTokenAccount
+      );
+
+      const hasAccess = tokenAccountInfo.amount >= BigInt(1);
       expect(hasAccess).to.be.true;
-      
-      // Without token
-      const noBuyerTokenBalance = 0;
-      const noAccess = noBuyerTokenBalance >= requiredBalance;
-      expect(noAccess).to.be.false;
-      
-      console.log("Access verification logic validated");
-      console.log("Has access (balance=1):", hasAccess);
-      console.log("No access (balance=0):", noAccess);
+
+      console.log("Access verification successful");
+      console.log("Buyer has", tokenAccountInfo.amount.toString(), "access token(s)");
+    });
+  });
+
+  describe("Access Token Properties", () => {
+    it("Should verify mint has 0 decimals", async () => {
+      const mintInfo = await provider.connection.getAccountInfo(mint.publicKey);
+      expect(mintInfo).to.not.be.null;
+
+      // Parse mint data to check decimals
+      // SPL Token Mint layout: decimals at byte 44
+      const decimals = mintInfo!.data[44];
+      expect(decimals).to.equal(0);
+
+      console.log("Mint has 0 decimals (non-divisible)");
+    });
+
+    it("Should verify mint authority is PDA", async () => {
+      const [expectedAuthority] = PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("access_mint_authority"),
+          creator.publicKey.toBuffer(),
+          Buffer.from(contentId),
+          seed.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+
+      // Verify mint authority matches PDA
+      const accessMintState = await program.account.accessMintState.fetch(
+        PublicKey.findProgramAddressSync(
+          [
+            Buffer.from("access_mint_state"),
+            creator.publicKey.toBuffer(),
+            Buffer.from(contentId),
+            seed.toArrayLike(Buffer, "le", 8),
+          ],
+          program.programId
+        )[0]
+      );
+
+      expect(accessMintState.mintAuthority.toString()).to.equal(expectedAuthority.toString());
+
+      console.log("Mint authority is PDA (only program can mint)");
+      console.log("Authority:", expectedAuthority.toString());
     });
   });
 });
