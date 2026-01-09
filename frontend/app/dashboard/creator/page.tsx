@@ -1,9 +1,18 @@
+"use client";
+
+import { useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, DollarSign, Package, TrendingUp } from "lucide-react";
 import { ProductCard } from "@/components/dashboard/product-card";
+import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog";
+import { CreateProductForm } from "@/components/dashboard/create-product-form";
+// @ts-ignore
+import Draggable from "react-draggable";
 
 export default function CreatorDashboard() {
+  const dragNodeRef = useRef(null);
+
   const stats = [
     {
       title: "Total Revenue",
@@ -52,9 +61,22 @@ export default function CreatorDashboard() {
           <h1 className="text-3xl font-bold text-white mb-1">Creator Studio</h1>
           <p className="text-zinc-400">Manage your products and track your performance.</p>
         </div>
-        <Button className="bg-[#007DFC] hover:bg-[#0063ca] text-white">
-          <Plus className="mr-2 h-4 w-4" /> Create New Product
-        </Button>
+        
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button className="bg-[#007DFC] hover:bg-[#0063ca] text-white shadow-[0_0_15px_-5px_#007DFC]">
+              <Plus className="mr-2 h-4 w-4" /> Create New Product
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="bg-transparent border-none p-0 max-w-2xl shadow-none overflow-visible">
+            <DialogTitle className="sr-only">Create New Product</DialogTitle>
+            <Draggable handle=".drag-handle" nodeRef={dragNodeRef}>
+              <div className="w-full" ref={dragNodeRef}>
+                <CreateProductForm />
+              </div>
+            </Draggable>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Stats Grid */}
