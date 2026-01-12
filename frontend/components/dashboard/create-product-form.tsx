@@ -10,7 +10,11 @@ import { Upload, Loader2, Link as LinkIcon, DollarSign, FileText, Image as Image
 import Image from "next/image";
 import axios from "axios";
 
-export function CreateProductForm() {
+interface CreateProductFormProps {
+  onSuccess?: () => void;
+}
+
+export function CreateProductForm({ onSuccess }: CreateProductFormProps) {
   const [loading, setLoading] = useState(false);
   const [coverImage, setCoverImage] = useState<string | null>(null);
   const [formData, setFormData] = useState({
@@ -60,8 +64,13 @@ export function CreateProductForm() {
       setFormData({ name: "", description: "", amount: "", gdriveLink: "" });
       setCoverImage(null);
       
-      // Optionally: close dialog, show success toast, etc.
-      window.location.reload(); // Refresh to show new product
+      // Call onSuccess callback if provided
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        // Fallback to reload if no callback provided
+        window.location.reload();
+      }
     } catch (error) {
       console.error("Failed to create product", error);
       if (axios.isAxiosError(error)) {

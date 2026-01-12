@@ -83,8 +83,22 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const creatorId = searchParams.get("creatorId");
+    const accessMints = searchParams.get("accessMints"); // Comma-separated list of mint addresses
 
-    const where = creatorId ? { creatorId } : {};
+    // Build where clause
+    let where: any = {};
+    
+    if (creatorId) {
+      where.creatorId = creatorId;
+    }
+
+    // If accessMints is provided, filter by access mint addresses
+    if (accessMints) {
+      const mintAddresses = accessMints.split(",").filter(Boolean);
+      where.accessMintAddress = {
+        in: mintAddresses,
+      };
+    }
 
     const products = await prisma.product.findMany({
       where,

@@ -3,11 +3,12 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Image as ImageIcon, Package } from "lucide-react";
+import { ExternalLink, Image as ImageIcon, Package, Loader2, Link } from "lucide-react";
 import Image from "next/image";
 import axios from "axios";
 import { WalletConnectButton } from "@/components/wallet-connect-button";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useWallet, useConnection } from "@solana/wallet-adapter-react";
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 interface Product {
   id: string;
@@ -16,6 +17,7 @@ interface Product {
   price: number;
   coverImage: string | null;
   gdriveLink: string;
+  accessMintAddress: string | null;
   creator: {
     id: string;
     name: string;
@@ -25,28 +27,78 @@ interface Product {
 
 export default function LibraryPage() {
   const { publicKey, connected } = useWallet();
+  const { connection } = useConnection();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (connected) {
+    if (connected && publicKey) {
       fetchPurchasedProducts();
     } else {
       setLoading(false);
     }
-  }, [connected]);
+  }, [connected, publicKey]);
 
   const fetchPurchasedProducts = async () => {
-    // TODO: Fetch products that user has purchased
-    // This would require checking for access tokens owned by the user's wallet
-    // For now, showing empty state
-    setLoading(false);
+    if (!publicKey || !connection) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // Get all token accounts owned by the user's wallet
+      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+        publicKey,
+        {
+          programId: TOKEN_PROGRAM_ID,
+        }
+      );
+
+      // Extract mint addresses from token accounts
+      const ownedMintAddresses = tokenAccounts.value
+        .filter((account) => {
+          // Check if the account has a balance > 0
+          const balance = account.account.data.parsed.info.tokenAmount.uiAmount;
+          return balance > 0;
+        })
+        .map((account) => account.account.data.parsed.info.mint);
+
+      if (ownedMintAddresses.length === 0) {
+        setProducts([]);
+        setLoading(false);
+        return;
+      }
+
+      // Fetch all products with access mints that match owned tokens
+      const response = await axios.get("/api/product", {
+        params: {
+          accessMints: ownedMintAddresses.join(","),
+        },
+      });
+
+      // Filter products where user owns the access token
+      const purchasedProducts = response.data.products.filter((product: Product) =>
+        product.accessMintAddress && ownedMintAddresses.includes(product.accessMintAddress)
+      );
+
+      setProducts(purchasedProducts);
+    } catch (error) {
+      console.error("Failed to fetch purchased products:", error);
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
     return (
       <div className="container mx-auto py-12">
-        <div className="text-center text-white">Loading your library...</div>
+        <div className="text-center text-white">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <p>Loading your library...</p>
+        </div>
       </div>
     );
   }
@@ -85,7 +137,7 @@ export default function LibraryPage() {
             Start browsing the marketplace to discover digital assets
           </p>
           <Button asChild className="bg-[#007DFC] hover:bg-[#0063ca]">
-            <a href="/marketplace">Browse Marketplace</a>
+            <Link href="/marketplace">Browse Marketplace</Link>
           </Button>
         </div>
       ) : (
