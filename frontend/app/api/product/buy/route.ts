@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import prisma from "@/lib/db";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { PAYMENT_ESCROW_PROGRAM_ID, ACCESS_MINT_PROGRAM_ID, DISTRIBUTION_PROGRAM_ID } from "@/lib/programs/constants";
-import { deriveEscrowState, deriveAccessMintState, deriveSplitState, hexToContentId } from "@/lib/programs/pdas";
+import { deriveEscrowState, deriveAccessMintState, deriveAccessMintAuthority, deriveSplitState, hexToContentId, deriveEscrowVault, deriveDistributionVault } from "@/lib/programs/pdas";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 /**
@@ -64,9 +64,11 @@ export async function POST(req: NextRequest) {
 
     // Derive PDAs
     const [escrowStatePda] = deriveEscrowState(buyerPublicKey, contentId, seed);
+    const [escrowVaultPda] = deriveEscrowVault(escrowStatePda);
     const [accessMintStatePda] = deriveAccessMintState(creatorPublicKey, contentId, seed);
-    const [accessMintAuthorityPda] = deriveAccessMintState(creatorPublicKey, contentId, seed); // Note: should derive authority
+    const [accessMintAuthorityPda] = deriveAccessMintAuthority(creatorPublicKey, contentId, seed);
     const [splitStatePda] = deriveSplitState(creatorPublicKey, contentId, seed);
+    const [distributionVaultPda] = deriveDistributionVault(splitStatePda);
 
     // Verify PDAs match stored addresses
     if (accessMintStatePda.toString() !== product.accessMintAddress) {
@@ -84,10 +86,12 @@ export async function POST(req: NextRequest) {
         paymentAmount: priceInLamports,
         accounts: {
           buyer: buyerPublicKey.toString(),
-          escrowState: escrowStatePda.toString(),
           creator: creatorPublicKey.toString(),
           contentId: Array.from(contentId),
           price: priceInLamports,
+          // Escrow accounts
+          escrowState: escrowStatePda.toString(),
+          vault: escrowVaultPda.toString(),
           // Access mint accounts
           accessMintProgram: ACCESS_MINT_PROGRAM_ID.toString(),
           accessMintState: accessMintStatePda.toString(),
@@ -96,6 +100,7 @@ export async function POST(req: NextRequest) {
           // Distribution accounts
           distributionProgram: DISTRIBUTION_PROGRAM_ID.toString(),
           splitState: splitStatePda.toString(),
+          distributionVault: distributionVaultPda.toString(), // Distribution vault (derived from split_state)
           platformTreasury: process.env.NEXT_PUBLIC_PLATFORM_TREASURY || "11111111111111111111111111111111",
         },
         seed,

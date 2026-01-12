@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program::{transfer, Transfer, System};
 use anchor_spl::token::{self, Transfer as SplTransfer};
 use crate::state::*;
 use crate::errors::*;
@@ -33,12 +34,21 @@ pub fn distribute<'info>(
     let is_sol_payment = ctx.accounts.payment_token_mint.key() == System::id();
     
     if is_sol_payment {
-        // Distribute SOL
+        // Distribute SOL using system program transfers signed by vault PDA
         
         // Transfer to platform treasury
         if platform_amount > 0 {
-            **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= platform_amount;
-            **ctx.accounts.platform_treasury.to_account_info().try_borrow_mut_lamports()? += platform_amount;
+            transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.platform_treasury.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                platform_amount,
+            )?;
             msg!("Distributed {} lamports to platform", platform_amount);
         }
         
@@ -54,16 +64,34 @@ pub fn distribute<'info>(
                     DistributionError::InvalidCollaborator
                 );
                 
-                **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= collab_amount;
-                **collab_account.try_borrow_mut_lamports()? += collab_amount;
+                transfer(
+                    CpiContext::new_with_signer(
+                        ctx.accounts.system_program.to_account_info(),
+                        Transfer {
+                            from: ctx.accounts.vault.to_account_info(),
+                            to: collab_account.to_account_info(),
+                        },
+                        signer_seeds,
+                    ),
+                    collab_amount,
+                )?;
                 msg!("Distributed {} lamports to collaborator {}", collab_amount, collaborator.pubkey);
             }
         }
         
         // Transfer remaining to creator
         if creator_amount > 0 {
-            **ctx.accounts.vault.to_account_info().try_borrow_mut_lamports()? -= creator_amount;
-            **ctx.accounts.creator.to_account_info().try_borrow_mut_lamports()? += creator_amount;
+            transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.creator.to_account_info(),
+                    },
+                    signer_seeds,
+                ),
+                creator_amount,
+            )?;
             msg!("Distributed {} lamports to creator", creator_amount);
         }
     } else {

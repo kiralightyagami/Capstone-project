@@ -107,6 +107,20 @@ export function deriveSplitState(
 }
 
 /**
+ * Derive distribution vault PDA from split_state
+ * Seeds: [b"vault", split_state.key().as_ref()]
+ */
+export function deriveDistributionVault(
+  splitState: PublicKey,
+  programId: PublicKey = DISTRIBUTION_PROGRAM_ID
+): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("vault"), splitState.toBuffer()],
+    programId
+  );
+}
+
+/**
  * Convert hex string to Uint8Array (32 bytes for content ID)
  */
 export function hexToContentId(hex: string): Buffer {

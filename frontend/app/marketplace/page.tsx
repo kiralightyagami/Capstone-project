@@ -38,7 +38,12 @@ export default function MarketplacePage() {
   const fetchProducts = async () => {
     try {
       const response = await axios.get("/api/product");
-      setProducts(response.data.products || []);
+      const allProducts = response.data.products || [];
+      // Only show products that are initialized on blockchain (ready for purchase)
+      const availableProducts = allProducts.filter(
+        (p: Product) => p.accessMintAddress && p.splitStateAddress
+      );
+      setProducts(availableProducts);
     } catch (error) {
       console.error("Failed to fetch products:", error);
     } finally {
@@ -49,7 +54,10 @@ export default function MarketplacePage() {
   if (loading) {
     return (
       <div className="container mx-auto py-12">
-        <div className="text-center text-white">Loading products...</div>
+        <div className="text-center text-white">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#007DFC] mb-4"></div>
+          <p>Loading products...</p>
+        </div>
       </div>
     );
   }
@@ -89,32 +97,39 @@ export default function MarketplacePage() {
                 </div>
               </CardHeader>
               <CardContent className="p-4">
-                <CardTitle className="text-lg mb-2 line-clamp-1">{product.name}</CardTitle>
-                <CardDescription className="text-zinc-400 text-sm line-clamp-2 mb-4">
+                <CardTitle className="text-lg mb-2 line-clamp-1 hover:text-[#007DFC] transition-colors">
+                  {product.name}
+                </CardTitle>
+                <div className="flex items-center gap-2 mb-2">
+                  {product.creator.image ? (
+                    <Image
+                      src={product.creator.image}
+                      alt={product.creator.name}
+                      width={20}
+                      height={20}
+                      className="rounded-full"
+                    />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full bg-zinc-700" />
+                  )}
+                  <span className="text-xs text-zinc-400">{product.creator.name}</span>
+                </div>
+                <CardDescription className="text-zinc-400 text-sm line-clamp-2 mb-3">
                   {product.description}
                 </CardDescription>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between mb-3">
                   <span className="text-2xl font-bold text-[#007DFC]">
                     {product.price} SOL
-                  </span>
-                  <span className="text-sm text-zinc-500">
-                    by {product.creator.name}
                   </span>
                 </div>
               </CardContent>
               <CardFooter className="p-4 pt-0">
-                {product.accessMintAddress && product.splitStateAddress ? (
-                  <Link href={`/marketplace/${product.id}`} className="w-full">
-                    <Button className="w-full bg-[#007DFC] hover:bg-[#0063ca] text-white">
-                      <ShoppingCart className="mr-2 h-4 w-4" />
-                      Buy Now
-                    </Button>
-                  </Link>
-                ) : (
-                  <Button disabled className="w-full bg-zinc-800 text-zinc-500">
-                    Not Available
+                <Link href={`/marketplace/${product.id}`} className="w-full">
+                  <Button className="w-full bg-[#007DFC] hover:bg-[#0063ca] text-white">
+                    <ShoppingCart className="mr-2 h-4 w-4" />
+                    Buy Now
                   </Button>
-                )}
+                </Link>
               </CardFooter>
             </Card>
           ))}

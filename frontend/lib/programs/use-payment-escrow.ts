@@ -1,10 +1,10 @@
 "use client";
 
 import { AnchorProvider, Program, type Idl } from "@coral-xyz/anchor";
-import { PublicKey } from "@solana/web3.js";
 import { useMemo } from "react";
 import { useConnection, useWallet, type AnchorWallet } from "@solana/wallet-adapter-react";
 import { PAYMENT_ESCROW_PROGRAM_ID } from "./constants";
+import paymentEscrowIdl from "../../../payment-escrow/target/idl/payment_escrow.json";
 
 /**
  * Hook to get Payment Escrow program instance
@@ -27,9 +27,7 @@ export function usePaymentEscrowProgram() {
     if (!provider) return null;
 
     try {
-      // Import IDL dynamically - adjust path based on your project structure
-      const idl = require("../../../payment-escrow/target/idl/payment_escrow.json");
-      return new Program(idl as Idl, provider);
+      return new Program(paymentEscrowIdl as Idl, provider);
     } catch (error) {
       console.warn("Failed to load Payment Escrow IDL:", error);
       return null;

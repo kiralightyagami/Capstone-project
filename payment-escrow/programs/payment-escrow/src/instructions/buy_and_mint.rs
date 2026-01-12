@@ -112,7 +112,60 @@ pub fn buy_and_mint<'info>(
     
     msg!("Access token minted to buyer: {}", ctx.accounts.buyer.key());
     
-    // CPI to Distribution program to distribute funds from vault
+    // Transfer funds from escrow vault to distribution vault before distributing
+    if escrow.payment_token_mint.is_none() {
+        // SOL payment: Transfer from escrow vault to distribution vault
+        let escrow_key = escrow.key();
+        let vault_bump = ctx.bumps.vault;
+        let vault_seeds = &[
+            b"vault".as_ref(),
+            escrow_key.as_ref(),
+            &[vault_bump],
+        ];
+        let signer_seeds = &[&vault_seeds[..]];
+        
+        // Use system program transfer to properly handle account creation and rent
+        transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.system_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.distribution_vault.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            payment_amount,
+        )?;
+        
+        msg!("Transferred {} lamports from escrow vault to distribution vault", payment_amount);
+    } else {
+        // SPL token payment: Transfer from escrow vault token account to distribution vault token account
+        let escrow_key = escrow.key();
+        let vault_bump = ctx.bumps.vault;
+        let vault_seeds = &[
+            b"vault".as_ref(),
+            escrow_key.as_ref(),
+            &[vault_bump],
+        ];
+        let signer_seeds = &[&vault_seeds[..]];
+        
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                SplTransfer {
+                    from: ctx.accounts.vault_token_account.to_account_info(),
+                    to: ctx.accounts.distribution_vault_token_account.to_account_info(),
+                    authority: ctx.accounts.vault.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            payment_amount,
+        )?;
+        
+        msg!("Transferred {} tokens from escrow vault to distribution vault", payment_amount);
+    }
+    
+    // CPI to Distribution program to distribute funds from distribution vault
     let remaining_accounts = ctx.remaining_accounts.to_vec();
     
     distribute(
@@ -120,11 +173,11 @@ pub fn buy_and_mint<'info>(
             ctx.accounts.distribution_program.to_account_info(),
             DistributeAccounts {
                 split_state: ctx.accounts.split_state.to_account_info(),
-                vault: ctx.accounts.vault.to_account_info(),
+                vault: ctx.accounts.distribution_vault.to_account_info(),
                 creator: ctx.accounts.creator.to_account_info(),
                 platform_treasury: ctx.accounts.platform_treasury.to_account_info(),
                 payment_token_mint: ctx.accounts.payment_token_mint.to_account_info(),
-                vault_token_account: ctx.accounts.vault_token_account.to_account_info(),
+                vault_token_account: ctx.accounts.distribution_vault_token_account.to_account_info(),
                 creator_token_account: ctx.accounts.creator_token_account.to_account_info(),
                 platform_treasury_token_account: ctx.accounts.platform_treasury_token_account.to_account_info(),
                 token_program: ctx.accounts.token_program.to_account_info(),
@@ -222,6 +275,17 @@ pub struct BuyAndMint<'info> {
     /// CHECK: Validated by distribution program via CPI
     #[account(mut)]
     pub split_state: UncheckedAccount<'info>,
+    
+    /// Distribution vault PDA (derived from split_state)
+    /// CHECK: Vault is a PDA derived from split_state in the distribution program
+    /// Validated by distribution program via CPI
+    #[account(mut)]
+    pub distribution_vault: UncheckedAccount<'info>,
+    
+    /// Distribution vault's SPL token account (for SPL payments)
+    /// CHECK: Optional account, validated when SPL payment is used
+    #[account(mut)]
+    pub distribution_vault_token_account: UncheckedAccount<'info>,
     
     /// Creator account (receives their share)
     /// CHECK: Validated by distribution program via CPI

@@ -15,6 +15,8 @@ import { BN } from "@coral-xyz/anchor";
 import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token";
 import { PAYMENT_ESCROW_PROGRAM_ID, ACCESS_MINT_PROGRAM_ID, DISTRIBUTION_PROGRAM_ID } from "@/lib/programs/constants";
 import { deriveEscrowVault } from "@/lib/programs/pdas";
+import { usePaymentEscrowProgram } from "@/lib/programs/use-payment-escrow";
+import * as anchor from "@coral-xyz/anchor";
 
 interface Product {
   id: string;
@@ -40,6 +42,7 @@ export default function ProductDetailPage() {
   const router = useRouter();
   const { publicKey, connected, sendTransaction } = useWallet();
   const { connection } = useConnection();
+  const { program: paymentEscrowProgram, provider: paymentEscrowProvider } = usePaymentEscrowProgram();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
@@ -52,11 +55,14 @@ export default function ProductDetailPage() {
 
   const fetchProduct = async () => {
     try {
+      // Fetch all products and find the one matching the ID
       const response = await axios.get("/api/product");
       const products = response.data.products || [];
       const found = products.find((p: Product) => p.id === params.productId);
       if (found) {
         setProduct(found);
+      } else {
+        console.error("Product not found");
       }
     } catch (error) {
       console.error("Failed to fetch product:", error);
@@ -75,6 +81,11 @@ export default function ProductDetailPage() {
       return;
     }
 
+    if (!paymentEscrowProgram || !paymentEscrowProvider) {
+      alert("Payment program not available. Please try again later.");
+      return;
+    }
+
     setPurchasing(true);
 
     try {
@@ -89,37 +100,112 @@ export default function ProductDetailPage() {
       }
 
       const { params: buyParams } = response.data;
+      const contentId = Buffer.from(buyParams.accounts.contentId);
 
-      // TODO: Call blockchain program here
-      // For now, show a message that this requires IDL files to be generated
-      alert(
-        "Purchase functionality requires program IDL files to be generated.\n" +
-        "Please build the Anchor programs first:\n" +
-        "cd access-mint && anchor build\n" +
-        "cd ../payment-escrow && anchor build\n" +
-        "cd ../distribution && anchor build\n" +
-        "\nThen import the IDL files in the program hooks."
+      // Get buyer's associated token account for the access mint
+      const accessMint = new PublicKey(buyParams.accounts.accessMint);
+      const buyerAccessTokenAccount = await getAssociatedTokenAddress(
+        accessMint,
+        publicKey
       );
 
-      // Once IDL files are available, uncomment and implement:
-      /*
-      const program = new Program(IDL, new PublicKey(buyParams.programId), provider);
-      const tx = await program.methods
-        .buyAndMint(new BN(buyParams.paymentAmount))
+      // Check if escrow already exists
+      const escrowState = new PublicKey(buyParams.accounts.escrowState);
+      let escrowExists = false;
+      try {
+        const accountInfo = await connection.getAccountInfo(escrowState);
+        escrowExists = accountInfo !== null;
+      } catch (error) {
+        // Escrow doesn't exist
+      }
+
+      const tx = new Transaction();
+
+      // Initialize escrow if it doesn't exist
+      if (!escrowExists) {
+        // Use paymentAmount (in lamports) for the price
+        const priceInLamports = buyParams.paymentAmount || buyParams.accounts.price;
+        if (!priceInLamports || priceInLamports <= 0) {
+          throw new Error("Invalid product price");
+        }
+
+        const initializeEscrowIx = await paymentEscrowProgram.methods
+          .initializeEscrow(
+            Array.from(contentId),
+            new anchor.BN(priceInLamports),
+            null, // No SPL token payment, use SOL
+            new anchor.BN(buyParams.seed)
+          )
+          .accounts({
+            buyer: publicKey,
+            creator: new PublicKey(buyParams.accounts.creator),
+            escrowState: escrowState,
+            systemProgram: SystemProgram.programId,
+          })
+          .instruction();
+        
+        tx.add(initializeEscrowIx);
+      }
+
+      // Get accounts for SOL payment
+      const creatorPublicKey = new PublicKey(buyParams.accounts.creator);
+      const platformTreasury = new PublicKey(buyParams.accounts.platformTreasury);
+      const escrowVaultPda = new PublicKey(buyParams.accounts.vault);
+      const distributionVaultPda = new PublicKey(buyParams.accounts.distributionVault);
+
+      const buyAndMintIx = await paymentEscrowProgram.methods
+        .buyAndMint(new anchor.BN(buyParams.paymentAmount))
         .accounts({
           buyer: publicKey,
-          escrowState: new PublicKey(buyParams.accounts.escrowState),
-          // ... other accounts
+          escrowState: escrowState,
+          vault: escrowVaultPda, // Escrow vault (derived from escrow_state) - required by constraint
+          // For SOL payments, these need to be the actual mutable accounts
+          // The program will check if payment_token_mint is None to determine SOL vs SPL
+          buyerTokenAccount: publicKey, // Buyer's wallet (mutable for SOL transfer)
+          vaultTokenAccount: escrowVaultPda, // Escrow vault PDA (mutable for SOL transfer)
+          tokenProgram: SystemProgram.programId, // Not used for SOL, but required
+          // Access mint accounts
+          accessMintProgram: new PublicKey(buyParams.accounts.accessMintProgram),
+          accessMintState: new PublicKey(buyParams.accounts.accessMintState),
+          accessMint: accessMint,
+          mintAuthority: new PublicKey(buyParams.accounts.mintAuthority),
+          buyerAccessTokenAccount: buyerAccessTokenAccount,
+          accessTokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          // Distribution accounts
+          distributionProgram: new PublicKey(buyParams.accounts.distributionProgram),
+          splitState: new PublicKey(buyParams.accounts.splitState),
+          distributionVault: distributionVaultPda, // Distribution vault (derived from split_state)
+          distributionVaultTokenAccount: distributionVaultPda, // For SOL, same as distribution vault
+          platformTreasury: platformTreasury,
+          // Additional accounts needed for distribution CPI
+          creator: creatorPublicKey,
+          paymentTokenMint: SystemProgram.programId, // SOL payment (System::id())
+          // For SOL payments, these are the actual wallet accounts (mutable)
+          creatorTokenAccount: creatorPublicKey, // Creator's wallet (mutable for SOL transfer)
+          platformTreasuryTokenAccount: platformTreasury, // Platform treasury (mutable for SOL transfer)
+          systemProgram: SystemProgram.programId,
         })
-        .rpc();
-      */
+        .remainingAccounts([]) // No collaborators for now
+        .instruction();
 
+      tx.add(buyAndMintIx);
+
+      // Send and confirm transaction
+      const signature = await paymentEscrowProvider.sendAndConfirm(tx);
+
+      alert(`Purchase successful! Transaction: ${signature}`);
+      
+      // Refresh the page or redirect to library
+      router.push("/dashboard/library");
     } catch (error) {
       console.error("Purchase error:", error);
       if (axios.isAxiosError(error)) {
         alert(error.response?.data?.error || "Failed to purchase product");
+      } else if (error instanceof Error) {
+        alert(`Purchase failed: ${error.message}`);
       } else {
-        alert(error instanceof Error ? error.message : "Failed to purchase product");
+        alert("Failed to purchase product. Please try again.");
       }
     } finally {
       setPurchasing(false);
@@ -129,18 +215,27 @@ export default function ProductDetailPage() {
   if (loading) {
     return (
       <div className="container mx-auto py-12">
-        <div className="text-center text-white">Loading...</div>
+        <div className="text-center text-white">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
+          <p>Loading product...</p>
+        </div>
       </div>
     );
   }
 
   if (!product) {
     return (
-      <div className="container mx-auto py-12">
-        <div className="text-center text-white">Product not found</div>
-        <Link href="/marketplace">
-          <Button className="mt-4">Back to Marketplace</Button>
-        </Link>
+      <div className="container mx-auto py-12 px-4">
+        <div className="text-center text-white space-y-4">
+          <h2 className="text-2xl font-bold">Product not found</h2>
+          <p className="text-zinc-400">The product you're looking for doesn't exist or has been removed.</p>
+          <Link href="/marketplace">
+            <Button className="bg-[#007DFC] hover:bg-[#0063ca] text-white">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Marketplace
+            </Button>
+          </Link>
+        </div>
       </div>
     );
   }

@@ -84,19 +84,13 @@ export function ProductCard({
           {isOwned ? "Owned" : displayPrice}
         </div>
         
-        <Button 
-          className="bg-white hover:bg-zinc-200 text-black font-bold h-9 px-4 text-sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            // Handle buy action
-          }}
-        >
+        <div className="bg-white hover:bg-zinc-200 text-black font-bold h-9 px-4 text-sm rounded-md flex items-center justify-center cursor-pointer transition-colors">
           {isOwned ? (
             <><Download className="mr-2 h-3.5 w-3.5" /> Download</>
           ) : (
             "Buy"
           )}
-        </Button>
+        </div>
       </div>
     </div>
   );
